@@ -15,12 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{make_array, new_null_array, Array, ArrayRef, RecordBatch};
-use arrow_buffer::{BooleanBuffer, Buffer, NullBuffer};
-use arrow_data::{ArrayData, ArrayDataBuilder};
-use arrow_schema::{ArrowError, DataType, Field, FieldRef, Fields, SchemaBuilder};
+use crate::{ make_array, new_null_array, Array, ArrayRef, RecordBatch };
+use arrow_buffer::{ BooleanBuffer, Buffer, NullBuffer };
+use arrow_data::{ ArrayData, ArrayDataBuilder };
+use arrow_schema::{ ArrowError, DataType, Field, FieldRef, Fields, SchemaBuilder };
 use std::sync::Arc;
-use std::{any::Any, ops::Index};
+use std::{ any::Any, ops::Index };
 
 /// An array of [structs](https://arrow.apache.org/docs/format/Columnar.html#struct-layout)
 ///
@@ -104,52 +104,80 @@ impl StructArray {
     pub fn try_new(
         fields: Fields,
         arrays: Vec<ArrayRef>,
-        nulls: Option<NullBuffer>,
+        nulls: Option<NullBuffer>
     ) -> Result<Self, ArrowError> {
-        if fields.len() != arrays.len() {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "Incorrect number of arrays for StructArray fields, expected {} got {}",
-                fields.len(),
-                arrays.len()
-            )));
-        }
-        let len = arrays.first().map(|x| x.len()).unwrap_or_default();
+        let len = arrays
+            .iter()
+            .map(|a| a.len())
+            .max()
+            .unwrap_or_default();
 
         if let Some(n) = nulls.as_ref() {
             if n.len() != len {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "Incorrect number of nulls for StructArray, expected {len} got {}",
-                    n.len(),
-                )));
+                return Err(
+                    ArrowError::InvalidArgumentError(
+                        format!(
+                            "Incorrect number of nulls for StructArray, expected {len} got {}",
+                            n.len()
+                        )
+                    )
+                );
             }
         }
 
-        for (f, a) in fields.iter().zip(&arrays) {
-            if f.data_type() != a.data_type() {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "Incorrect datatype for StructArray field {:?}, expected {} got {}",
-                    f.name(),
-                    f.data_type(),
-                    a.data_type()
-                )));
-            }
+        let mut final_arrays = Vec::with_capacity(fields.len());
 
-            if a.len() != len {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "Incorrect array length for StructArray field {:?}, expected {} got {}",
-                    f.name(),
-                    len,
-                    a.len()
-                )));
+        for (i, f) in fields.iter().enumerate() {
+            if i < arrays.len() {
+                let a = &arrays[i];
+                if f.data_type() != a.data_type() {
+                    return Err(
+                        ArrowError::InvalidArgumentError(
+                            format!(
+                                "Incorrect datatype for StructArray field {:?}, expected {} got {}",
+                                f.name(),
+                                f.data_type(),
+                                a.data_type()
+                            )
+                        )
+                    );
+                }
+
+                if a.len() != len {
+                    return Err(
+                        ArrowError::InvalidArgumentError(
+                            format!(
+                                "Incorrect array length for StructArray field {:?}, expected {} got {}",
+                                f.name(),
+                                len,
+                                a.len()
+                            )
+                        )
+                    );
+                }
+
+                final_arrays.push(a.clone());
+            } else {
+                // If no array is provided for this field, create a null array
+                final_arrays.push(new_null_array(f.data_type(), len));
             }
 
             if !f.is_nullable() {
-                if let Some(a) = a.logical_nulls() {
-                    if !nulls.as_ref().map(|n| n.contains(&a)).unwrap_or_default() {
-                        return Err(ArrowError::InvalidArgumentError(format!(
-                            "Found unmasked nulls for non-nullable StructArray field {:?}",
-                            f.name()
-                        )));
+                if let Some(a) = final_arrays.last().unwrap().logical_nulls() {
+                    if
+                        !nulls
+                            .as_ref()
+                            .map(|n| n.contains(&a))
+                            .unwrap_or_default()
+                    {
+                        return Err(
+                            ArrowError::InvalidArgumentError(
+                                format!(
+                                    "Found unmasked nulls for non-nullable StructArray field {:?}",
+                                    f.name()
+                                )
+                            )
+                        );
                     }
                 }
             }
@@ -159,7 +187,7 @@ impl StructArray {
             len,
             data_type: DataType::Struct(fields),
             nulls: nulls.filter(|n| n.null_count() > 0),
-            fields: arrays,
+            fields: final_arrays,
         })
     }
 
@@ -186,9 +214,12 @@ impl StructArray {
     pub unsafe fn new_unchecked(
         fields: Fields,
         arrays: Vec<ArrayRef>,
-        nulls: Option<NullBuffer>,
+        nulls: Option<NullBuffer>
     ) -> Self {
-        let len = arrays.first().map(|x| x.len()).unwrap_or_default();
+        let len = arrays
+            .first()
+            .map(|x| x.len())
+            .unwrap_or_default();
         Self {
             len,
             data_type: DataType::Struct(fields),
@@ -204,7 +235,7 @@ impl StructArray {
     /// If `len != nulls.len()`
     pub fn new_empty_fields(len: usize, nulls: Option<NullBuffer>) -> Self {
         if let Some(n) = &nulls {
-            assert_eq!(len, n.len())
+            assert_eq!(len, n.len());
         }
         Self {
             len,
@@ -247,10 +278,11 @@ impl StructArray {
     /// Return field names in this struct array
     pub fn column_names(&self) -> Vec<&str> {
         match self.data_type() {
-            DataType::Struct(fields) => fields
-                .iter()
-                .map(|f| f.name().as_str())
-                .collect::<Vec<&str>>(),
+            DataType::Struct(fields) =>
+                fields
+                    .iter()
+                    .map(|f| f.name().as_str())
+                    .collect::<Vec<&str>>(),
             _ => unreachable!("Struct array's data type is not struct!"),
         }
     }
@@ -282,7 +314,10 @@ impl StructArray {
             "the length + offset of the sliced StructArray cannot exceed the existing length"
         );
 
-        let fields = self.fields.iter().map(|a| a.slice(offset, len)).collect();
+        let fields = self.fields
+            .iter()
+            .map(|a| a.slice(offset, len))
+            .collect();
 
         Self {
             len,
@@ -315,7 +350,12 @@ impl From<StructArray> for ArrayData {
         let builder = ArrayDataBuilder::new(array.data_type)
             .len(array.len)
             .nulls(array.nulls)
-            .child_data(array.fields.iter().map(|x| x.to_data()).collect());
+            .child_data(
+                array.fields
+                    .iter()
+                    .map(|x| x.to_data())
+                    .collect()
+            );
 
         unsafe { builder.build_unchecked() }
     }
@@ -329,10 +369,7 @@ impl TryFrom<Vec<(&str, ArrayRef)>> for StructArray {
         let (schema, arrays): (SchemaBuilder, _) = values
             .into_iter()
             .map(|(name, array)| {
-                (
-                    Field::new(name, array.data_type().clone(), array.is_nullable()),
-                    array,
-                )
+                (Field::new(name, array.data_type().clone(), array.is_nullable()), array)
             })
             .unzip();
 
@@ -378,7 +415,10 @@ impl Array for StructArray {
     }
 
     fn get_buffer_memory_size(&self) -> usize {
-        let mut size = self.fields.iter().map(|a| a.get_buffer_memory_size()).sum();
+        let mut size = self.fields
+            .iter()
+            .map(|a| a.get_buffer_memory_size())
+            .sum();
         if let Some(n) = self.nulls.as_ref() {
             size += n.buffer().capacity();
         }
@@ -386,7 +426,10 @@ impl Array for StructArray {
     }
 
     fn get_array_memory_size(&self) -> usize {
-        let mut size = self.fields.iter().map(|a| a.get_array_memory_size()).sum();
+        let mut size = self.fields
+            .iter()
+            .map(|a| a.get_array_memory_size())
+            .sum();
         size += std::mem::size_of::<Self>();
         if let Some(n) = self.nulls.as_ref() {
             size += n.buffer().capacity();
@@ -407,13 +450,7 @@ impl std::fmt::Debug for StructArray {
         write!(f, "StructArray\n[\n")?;
         for (child_index, name) in self.column_names().iter().enumerate() {
             let column = self.column(child_index);
-            writeln!(
-                f,
-                "-- child {}: \"{}\" ({:?})",
-                child_index,
-                name,
-                column.data_type()
-            )?;
+            writeln!(f, "-- child {}: \"{}\" ({:?})", child_index, name, column.data_type())?;
             std::fmt::Debug::fmt(column, f)?;
             writeln!(f)?;
         }
@@ -423,7 +460,10 @@ impl std::fmt::Debug for StructArray {
 
 impl From<(Vec<(FieldRef, ArrayRef)>, Buffer)> for StructArray {
     fn from(pair: (Vec<(FieldRef, ArrayRef)>, Buffer)) -> Self {
-        let len = pair.0.first().map(|x| x.1.len()).unwrap_or_default();
+        let len = pair.0
+            .first()
+            .map(|x| x.1.len())
+            .unwrap_or_default();
         let (fields, arrays): (SchemaBuilder, Vec<_>) = pair.0.into_iter().unzip();
         let nulls = NullBuffer::new(BooleanBuffer::new(pair.1, 0, len));
         Self::new(fields.finish().fields, arrays, Some(nulls))
@@ -462,7 +502,7 @@ impl Index<&str> for StructArray {
 mod tests {
     use super::*;
 
-    use crate::{BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, StringArray};
+    use crate::{ BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, StringArray };
     use arrow_buffer::ToByteSlice;
 
     #[test]
@@ -472,7 +512,7 @@ mod tests {
 
         let fields = vec![
             Field::new("a", DataType::Boolean, false),
-            Field::new("b", DataType::Int64, false),
+            Field::new("b", DataType::Int64, false)
         ];
         let struct_array_data = ArrayData::builder(DataType::Struct(fields.into()))
             .len(4)
@@ -491,16 +531,12 @@ mod tests {
         let boolean = Arc::new(BooleanArray::from(vec![false, false, true, true]));
         let int = Arc::new(Int32Array::from(vec![42, 28, 19, 31]));
 
-        let struct_array = StructArray::from(vec![
-            (
-                Arc::new(Field::new("b", DataType::Boolean, false)),
-                boolean.clone() as ArrayRef,
-            ),
-            (
-                Arc::new(Field::new("c", DataType::Int32, false)),
-                int.clone() as ArrayRef,
-            ),
-        ]);
+        let struct_array = StructArray::from(
+            vec![
+                (Arc::new(Field::new("b", DataType::Boolean, false)), boolean.clone() as ArrayRef),
+                (Arc::new(Field::new("c", DataType::Int32, false)), int.clone() as ArrayRef)
+            ]
+        );
         assert_eq!(struct_array.column(0).as_ref(), boolean.as_ref());
         assert_eq!(struct_array.column(1).as_ref(), int.as_ref());
         assert_eq!(4, struct_array.len());
@@ -514,16 +550,12 @@ mod tests {
         let boolean = Arc::new(BooleanArray::from(vec![false, false, true, true]));
         let int = Arc::new(Int32Array::from(vec![42, 28, 19, 31]));
 
-        let struct_array = StructArray::from(vec![
-            (
-                Arc::new(Field::new("b", DataType::Boolean, false)),
-                boolean.clone() as ArrayRef,
-            ),
-            (
-                Arc::new(Field::new("c", DataType::Int32, false)),
-                int.clone() as ArrayRef,
-            ),
-        ]);
+        let struct_array = StructArray::from(
+            vec![
+                (Arc::new(Field::new("b", DataType::Boolean, false)), boolean.clone() as ArrayRef),
+                (Arc::new(Field::new("c", DataType::Int32, false)), int.clone() as ArrayRef)
+            ]
+        );
         assert_eq!(struct_array["b"].as_ref(), boolean.as_ref());
         assert_eq!(struct_array["c"].as_ref(), int.as_ref());
     }
@@ -531,16 +563,14 @@ mod tests {
     /// validates that the in-memory representation follows [the spec](https://arrow.apache.org/docs/format/Columnar.html#struct-layout)
     #[test]
     fn test_struct_array_from_vec() {
-        let strings: ArrayRef = Arc::new(StringArray::from(vec![
-            Some("joe"),
-            None,
-            None,
-            Some("mark"),
-        ]));
+        let strings: ArrayRef = Arc::new(
+            StringArray::from(vec![Some("joe"), None, None, Some("mark")])
+        );
         let ints: ArrayRef = Arc::new(Int32Array::from(vec![Some(1), Some(2), None, Some(4)]));
 
-        let arr =
-            StructArray::try_from(vec![("f1", strings.clone()), ("f2", ints.clone())]).unwrap();
+        let arr = StructArray::try_from(
+            vec![("f1", strings.clone()), ("f2", ints.clone())]
+        ).unwrap();
 
         let struct_data = arr.into_data();
         assert_eq!(4, struct_data.len());
@@ -567,12 +597,16 @@ mod tests {
 
     #[test]
     fn test_struct_array_from_vec_error() {
-        let strings: ArrayRef = Arc::new(StringArray::from(vec![
-            Some("joe"),
-            None,
-            None,
-            // 3 elements, not 4
-        ]));
+        let strings: ArrayRef = Arc::new(
+            StringArray::from(
+                vec![
+                    Some("joe"),
+                    None,
+                    None
+                    // 3 elements, not 4
+                ]
+            )
+        );
         let ints: ArrayRef = Arc::new(Int32Array::from(vec![Some(1), Some(2), None, Some(4)]));
 
         let err = StructArray::try_from(vec![("f1", strings.clone()), ("f2", ints.clone())])
@@ -590,10 +624,14 @@ mod tests {
         expected = "Incorrect datatype for StructArray field \\\"b\\\", expected Int16 got Boolean"
     )]
     fn test_struct_array_from_mismatched_types_single() {
-        drop(StructArray::from(vec![(
-            Arc::new(Field::new("b", DataType::Int16, false)),
-            Arc::new(BooleanArray::from(vec![false, false, true, true])) as Arc<dyn Array>,
-        )]));
+        drop(
+            StructArray::from(
+                vec![(
+                    Arc::new(Field::new("b", DataType::Int16, false)),
+                    Arc::new(BooleanArray::from(vec![false, false, true, true])) as Arc<dyn Array>,
+                )]
+            )
+        );
     }
 
     #[test]
@@ -601,16 +639,22 @@ mod tests {
         expected = "Incorrect datatype for StructArray field \\\"b\\\", expected Int16 got Boolean"
     )]
     fn test_struct_array_from_mismatched_types_multiple() {
-        drop(StructArray::from(vec![
-            (
-                Arc::new(Field::new("b", DataType::Int16, false)),
-                Arc::new(BooleanArray::from(vec![false, false, true, true])) as Arc<dyn Array>,
-            ),
-            (
-                Arc::new(Field::new("c", DataType::Utf8, false)),
-                Arc::new(Int32Array::from(vec![42, 28, 19, 31])),
-            ),
-        ]));
+        drop(
+            StructArray::from(
+                vec![
+                    (
+                        Arc::new(Field::new("b", DataType::Int16, false)),
+                        Arc::new(BooleanArray::from(vec![false, false, true, true])) as Arc<
+                            dyn Array
+                        >,
+                    ),
+                    (
+                        Arc::new(Field::new("c", DataType::Utf8, false)),
+                        Arc::new(Int32Array::from(vec![42, 28, 19, 31])),
+                    )
+                ]
+            )
+        );
     }
 
     #[test]
@@ -630,7 +674,7 @@ mod tests {
 
         let field_types = vec![
             Field::new("a", DataType::Boolean, true),
-            Field::new("b", DataType::Int32, true),
+            Field::new("b", DataType::Int32, true)
         ];
         let struct_array_data = ArrayData::builder(DataType::Struct(field_types.into()))
             .len(5)
@@ -705,16 +749,20 @@ mod tests {
         expected = "Incorrect array length for StructArray field \\\"c\\\", expected 1 got 2"
     )]
     fn test_invalid_struct_child_array_lengths() {
-        drop(StructArray::from(vec![
-            (
-                Arc::new(Field::new("b", DataType::Float32, false)),
-                Arc::new(Float32Array::from(vec![1.1])) as Arc<dyn Array>,
-            ),
-            (
-                Arc::new(Field::new("c", DataType::Float64, false)),
-                Arc::new(Float64Array::from(vec![2.2, 3.3])),
-            ),
-        ]));
+        drop(
+            StructArray::from(
+                vec![
+                    (
+                        Arc::new(Field::new("b", DataType::Float32, false)),
+                        Arc::new(Float32Array::from(vec![1.1])) as Arc<dyn Array>,
+                    ),
+                    (
+                        Arc::new(Field::new("c", DataType::Float64, false)),
+                        Arc::new(Float64Array::from(vec![2.2, 3.3])),
+                    )
+                ]
+            )
+        );
     }
 
     #[test]
@@ -726,9 +774,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "Found unmasked nulls for non-nullable StructArray field \\\"c\\\"")]
     fn test_struct_array_from_mismatched_nullability() {
-        drop(StructArray::from(vec![(
-            Arc::new(Field::new("c", DataType::Int32, false)),
-            Arc::new(Int32Array::from(vec![Some(42), None, Some(19)])) as ArrayRef,
-        )]));
+        drop(
+            StructArray::from(
+                vec![(
+                    Arc::new(Field::new("c", DataType::Int32, false)),
+                    Arc::new(Int32Array::from(vec![Some(42), None, Some(19)])) as ArrayRef,
+                )]
+            )
+        );
     }
 }

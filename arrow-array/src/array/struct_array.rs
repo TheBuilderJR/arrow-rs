@@ -104,52 +104,78 @@ impl StructArray {
     pub fn try_new(
         fields: Fields,
         arrays: Vec<ArrayRef>,
-        nulls: Option<NullBuffer>,
+        nulls: Option<NullBuffer>
     ) -> Result<Self, ArrowError> {
-        if fields.len() != arrays.len() {
-            return Err(ArrowError::InvalidArgumentError(format!(
-                "Incorrect number of arrays for StructArray fields, expected {} got {}",
-                fields.len(),
-                arrays.len()
-            )));
-        }
-        let len = arrays.first().map(|x| x.len()).unwrap_or_default();
+        let len = arrays
+            .iter()
+            .map(|a| a.len())
+            .max()
+            .unwrap_or_default();
 
         if let Some(n) = nulls.as_ref() {
             if n.len() != len {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "Incorrect number of nulls for StructArray, expected {len} got {}",
-                    n.len(),
-                )));
+                return Err(
+                    ArrowError::InvalidArgumentError(
+                        format!(
+                            "Incorrect number of nulls for StructArray, expected {len} got {}",
+                            n.len()
+                        )
+                    )
+                );
             }
         }
 
-        for (f, a) in fields.iter().zip(&arrays) {
-            if f.data_type() != a.data_type() {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "Incorrect datatype for StructArray field {:?}, expected {} got {}",
-                    f.name(),
-                    f.data_type(),
-                    a.data_type()
-                )));
-            }
+        let mut final_arrays = Vec::with_capacity(fields.len());
+        for (i, f) in fields.iter().enumerate() {
+            if i < arrays.len() {
+                let a = &arrays[i];
+                if f.data_type() != a.data_type() {
+                    return Err(
+                        ArrowError::InvalidArgumentError(
+                            format!(
+                                "Incorrect datatype for StructArray field {:?}, expected {} got {}",
+                                f.name(),
+                                f.data_type(),
+                                a.data_type()
+                            )
+                        )
+                    );
+                }
+                if a.len() != len {
+                    return Err(
+                        ArrowError::InvalidArgumentError(
+                            format!(
+                                "Incorrect array length for StructArray field {:?}, expected {} got {}",
+                                f.name(),
+                                len,
+                                a.len()
+                            )
+                        )
+                    );
+                }
 
-            if a.len() != len {
-                return Err(ArrowError::InvalidArgumentError(format!(
-                    "Incorrect array length for StructArray field {:?}, expected {} got {}",
-                    f.name(),
-                    len,
-                    a.len()
-                )));
+                final_arrays.push(a.clone());
+            } else {
+                // If no array is provided for this field, create a null array
+                final_arrays.push(new_null_array(f.data_type(), len));
             }
 
             if !f.is_nullable() {
-                if let Some(a) = a.logical_nulls() {
-                    if !nulls.as_ref().map(|n| n.contains(&a)).unwrap_or_default() {
-                        return Err(ArrowError::InvalidArgumentError(format!(
-                            "Found unmasked nulls for non-nullable StructArray field {:?}",
-                            f.name()
-                        )));
+                if let Some(a) = final_arrays.last().unwrap().logical_nulls() {
+                    if
+                        !nulls
+                            .as_ref()
+                            .map(|n| n.contains(&a))
+                            .unwrap_or_default()
+                    {
+                        return Err(
+                            ArrowError::InvalidArgumentError(
+                                format!(
+                                    "Found unmasked nulls for non-nullable StructArray field {:?}",
+                                    f.name()
+                                )
+                            )
+                        );
                     }
                 }
             }

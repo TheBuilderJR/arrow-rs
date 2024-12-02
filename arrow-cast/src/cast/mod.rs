@@ -187,11 +187,15 @@ pub fn can_cast_types(from_type: &DataType, to_type: &DataType) -> bool {
         // string to decimal
         (Utf8View | Utf8 | LargeUtf8, Decimal128(_, _) | Decimal256(_, _)) => true,
         (Struct(from_fields), Struct(to_fields)) => {
-            from_fields.len() == to_fields.len() &&
-                from_fields.iter().zip(to_fields.iter()).all(|(f1, f2)| {
-                    // Assume that nullability between two structs are compatible, if not,
-                    // cast kernel will return error.
-                    can_cast_types(f1.data_type(), f2.data_type())
+            from_fields
+                .iter()
+                .all(|from_field| {
+                    to_fields
+                        .iter()
+                        .any(|to_field| {
+                            from_field.name() == to_field.name() &&
+                                can_cast_types(from_field.data_type(), to_field.data_type())
+                        })
                 })
         }
         (Struct(_), _) => false,
